@@ -1,5 +1,6 @@
 const Exam = require("../models/Exam");
 const Category = require("../models/Category");
+const Question = require("../models/Question");
 
 // Create Exam
 const createExam = async (req, res) => {
@@ -46,10 +47,7 @@ const createExam = async (req, res) => {
       instructions: instructions || [],
     });
 
-    const populatedExam = await exam.populate(
-      "category",
-      "name description"
-    );
+    const populatedExam = await exam.populate("category", "name description");
 
     res.status(201).json({
       message: "Exam created successfully",
@@ -63,7 +61,6 @@ const createExam = async (req, res) => {
     });
   }
 };
-
 
 // Get All Exams
 const getExams = async (req, res) => {
@@ -85,7 +82,6 @@ const getExams = async (req, res) => {
     });
   }
 };
-
 
 // Get Single Exam
 const getExamById = async (req, res) => {
@@ -113,7 +109,6 @@ const getExamById = async (req, res) => {
   }
 };
 
-
 // Update Exam
 const updateExam = async (req, res) => {
   try {
@@ -127,6 +122,7 @@ const updateExam = async (req, res) => {
       difficulty,
       examType,
       instructions,
+      questionBlueprint,
       isActive,
     } = req.body;
 
@@ -186,6 +182,16 @@ const updateExam = async (req, res) => {
       exam.instructions = instructions;
     }
 
+    if (questionBlueprint !== undefined) {
+      if (!Array.isArray(questionBlueprint)) {
+        return res.status(400).json({
+          message: "questionBlueprint must be an array",
+        });
+      }
+
+      exam.questionBlueprint = questionBlueprint;
+    }
+
     if (isActive !== undefined) {
       exam.isActive = isActive;
     }
@@ -194,7 +200,7 @@ const updateExam = async (req, res) => {
 
     const populatedExam = await updatedExam.populate(
       "category",
-      "name description"
+      "name description",
     );
 
     res.status(200).json({
@@ -209,7 +215,6 @@ const updateExam = async (req, res) => {
     });
   }
 };
-
 
 // Delete Exam
 const deleteExam = async (req, res) => {
@@ -239,6 +244,114 @@ const deleteExam = async (req, res) => {
   }
 };
 
+// Generate Exam Paper from Question Blueprint
+const generateExamPaper = async (req, res) => {
+  try {
+    const exam = await Exam.findOne({
+      _id: req.params.id,
+      isActive: true,
+    });
+
+    if (!exam) {
+      return res.status(404).json({
+        message: "Exam not found or inactive",
+      });
+    }
+
+    const blueprint = exam.questionBlueprint || [];
+
+    // Check blueprint
+    if (blueprint.length === 0) {
+      return res.status(400).json({
+        message: "Exam question blueprint is empty",
+      });
+    }
+
+    // Validate blueprint
+    for (const item of blueprint) {
+      if (!item.subject || !item.questionCount || item.questionCount < 1) {
+        return res.status(400).json({
+          message: "Invalid question blueprint",
+        });
+      }
+    }
+
+    // Calculate total required questions
+    const requiredQuestions = blueprint.reduce(
+      (total, item) => total + item.questionCount,
+      0,
+    );
+
+    // Check each blueprint section
+    const generatedQuestions = [];
+
+    for (const item of blueprint) {
+      const filter = {
+        exam: exam._id,
+        subject: item.subject,
+        isActive: true,
+      };
+
+      // Topic filter
+      if (item.topic && item.topic.trim() !== "") {
+        filter.topic = item.topic;
+      }
+
+      // Difficulty filter
+      if (item.difficulty && item.difficulty !== "mixed") {
+        filter.difficulty = item.difficulty;
+      }
+
+      // Count available questions
+      const availableCount = await Question.countDocuments(filter);
+
+      // Not enough questions
+      if (availableCount < item.questionCount) {
+        return res.status(400).json({
+          message: "Not enough questions available",
+          subject: item.subject,
+          required: item.questionCount,
+          available: availableCount,
+        });
+      }
+
+      // Randomly select questions
+      const selectedQuestions = await Question.aggregate([
+        {
+          $match: filter,
+        },
+        {
+          $sample: {
+            size: item.questionCount,
+          },
+        },
+        {
+          $project: {
+            correctAnswer: 0,
+            explanation: 0,
+          },
+        },
+      ]);
+
+      generatedQuestions.push(...selectedQuestions);
+    }
+
+    res.status(200).json({
+      message: "Exam paper generated successfully",
+      examId: exam._id,
+      examTitle: exam.title,
+      totalQuestions: generatedQuestions.length,
+      requiredQuestions,
+      questions: generatedQuestions,
+    });
+  } catch (error) {
+    console.error("Generate Exam Paper Error:", error.message);
+
+    res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
 
 module.exports = {
   createExam,
@@ -246,4 +359,5 @@ module.exports = {
   getExamById,
   updateExam,
   deleteExam,
+  generateExamPaper,
 };

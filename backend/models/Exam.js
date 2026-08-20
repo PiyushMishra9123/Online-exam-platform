@@ -59,6 +59,38 @@ const examSchema = new mongoose.Schema(
       default: [],
     },
 
+
+    questionBlueprint: {
+  type: [
+    {
+      subject: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+
+      topic: {
+        type: String,
+        default: "",
+        trim: true,
+      },
+
+      questionCount: {
+        type: Number,
+        required: true,
+        min: 1,
+      },
+
+      difficulty: {
+        type: String,
+        enum: ["easy", "medium", "hard", "mixed"],
+        default: "mixed",
+      },
+    },
+  ],
+  default: [],
+},
+
     isActive: {
       type: Boolean,
       default: true,

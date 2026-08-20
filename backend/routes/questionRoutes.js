@@ -6,6 +6,7 @@ const {
   getQuestionById,
   updateQuestion,
   deleteQuestion,
+  createMultipleQuestions,
 } = require("../controllers/questionController");
 
 const protect = require("../middleware/authMiddleware");
@@ -33,6 +34,13 @@ router.post(
   protect,
   adminOnly,
   createQuestion
+);
+
+router.post(
+  "/bulk",
+  protect,
+  adminOnly,
+  createMultipleQuestions
 );
 
 // Admin update question

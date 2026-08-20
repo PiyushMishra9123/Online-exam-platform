@@ -103,17 +103,213 @@ const createQuestion = async (req, res) => {
   }
 };
 
-// Get Questions by Exam
+// Create Multiple Questions
+const createMultipleQuestions = async (req, res) => {
+  try {
+    const { exam, questions } = req.body;
+
+    if (!exam || !questions) {
+      return res.status(400).json({
+        message: "Exam and questions are required",
+      });
+    }
+
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({
+        message: "Questions must be a non-empty array",
+      });
+    }
+
+    // Check exam
+    const existingExam = await Exam.findOne({
+      _id: exam,
+      isActive: true,
+    });
+
+    if (!existingExam) {
+      return res.status(404).json({
+        message: "Exam not found or inactive",
+      });
+    }
+
+    // Validate every question
+    for (const question of questions) {
+      if (
+        !question.questionText ||
+        !question.options ||
+        question.correctAnswer === undefined ||
+        !question.subject
+      ) {
+        return res.status(400).json({
+          message:
+            "Every question must have questionText, options, correctAnswer and subject",
+        });
+      }
+
+      if (
+        !Array.isArray(question.options) ||
+        question.options.length < 2
+      ) {
+        return res.status(400).json({
+          message:
+            "Every question must have at least 2 options",
+        });
+      }
+
+      if (
+        question.correctAnswer < 0 ||
+        question.correctAnswer >= question.options.length
+      ) {
+        return res.status(400).json({
+          message:
+            "Invalid correct answer index",
+        });
+      }
+    }
+
+    // Prepare questions
+    const questionsToCreate = questions.map((question) => ({
+      exam,
+      questionText: question.questionText.trim(),
+      options: question.options,
+      correctAnswer: question.correctAnswer,
+      explanation: question.explanation?.trim() || "",
+      marks: question.marks ?? 1,
+      negativeMarks:
+        question.negativeMarks ??
+        existingExam.negativeMarking,
+      subject: question.subject.trim(),
+      topic: question.topic?.trim() || "",
+      difficulty: question.difficulty || "medium",
+      questionType: question.questionType || "mcq",
+    }));
+
+    // Insert all questions
+    const createdQuestions = await Question.insertMany(
+      questionsToCreate
+    );
+
+    // Update exam counters
+    existingExam.totalQuestions += createdQuestions.length;
+
+    const addedMarks = createdQuestions.reduce(
+      (total, question) => total + question.marks,
+      0
+    );
+
+    existingExam.totalMarks += addedMarks;
+
+    await existingExam.save();
+
+    res.status(201).json({
+      message: `${createdQuestions.length} questions created successfully`,
+      questions: createdQuestions,
+    });
+  } catch (error) {
+    console.error(
+      "Create Multiple Questions Error:",
+      error.message
+    );
+
+    res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+// Get Questions by Exam with Filters, Pagination and Random Selection
 const getQuestionsByExam = async (req, res) => {
   try {
-    const questions = await Question.find({
+    const {
+      subject,
+      topic,
+      difficulty,
+      page = 1,
+      limit = 10,
+      random = "false",
+    } = req.query;
+
+    const filter = {
       exam: req.params.examId,
       isActive: true,
-    })
+    };
+
+    // Subject filter
+    if (subject) {
+      filter.subject = subject;
+    }
+
+    // Topic filter
+    if (topic) {
+      filter.topic = topic;
+    }
+
+    // Difficulty filter
+    if (difficulty) {
+      filter.difficulty = difficulty;
+    }
+
+    // Validate limit
+    const questionLimit = Math.min(
+      Math.max(parseInt(limit) || 10, 1),
+      100
+    );
+
+    // Random questions
+    if (random === "true") {
+      const questions = await Question.aggregate([
+        {
+          $match: filter,
+        },
+        {
+          $sample: {
+            size: questionLimit,
+          },
+        },
+        {
+          $project: {
+            correctAnswer: 0,
+            explanation: 0,
+          },
+        },
+      ]);
+
+      return res.status(200).json({
+        count: questions.length,
+        random: true,
+        questions,
+      });
+    }
+
+    // Normal pagination
+    const currentPage = Math.max(
+      parseInt(page) || 1,
+      1
+    );
+
+    const skip = (currentPage - 1) * questionLimit;
+
+    const totalQuestions = await Question.countDocuments(
+      filter
+    );
+
+    const questions = await Question.find(filter)
       .select("-correctAnswer -explanation")
-      .sort({ createdAt: 1 });
+      .sort({ createdAt: 1 })
+      .skip(skip)
+      .limit(questionLimit);
+
+    const totalPages = Math.ceil(
+      totalQuestions / questionLimit
+    );
 
     res.status(200).json({
+      count: questions.length,
+      totalQuestions,
+      currentPage,
+      totalPages,
+      limit: questionLimit,
+      random: false,
       questions,
     });
   } catch (error) {
@@ -333,6 +529,7 @@ const deleteQuestion = async (req, res) => {
 
 module.exports = {
   createQuestion,
+  createMultipleQuestions,
   getQuestionsByExam,
   getQuestionById,
   updateQuestion,
